@@ -60,7 +60,7 @@ def custom(code: str, state: str):
 		provider = path[3]
 		# Validates if provider doctype exists
 		if frappe.db.exists("Social Login Key", provider):
-			login_via_oauth2(provider, code, state, decoder=decoder_compat)
+			login_via_oauth2_id_token(provider, code, state, decoder=decoder_compat)
 
 
 def decoder_compat(b):
