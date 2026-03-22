@@ -182,18 +182,12 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 		const match_rules_list = frappe.perm.get_match_rules(this.doctype);
 		if (match_rules_list.length) {
 			this.restricted_list = $(
-				`<button class="btn btn-xs restricted-button flex align-center ${
-					frappe.is_mobile() ? "ml-2" : ""
-				}">
+				`<button class="btn btn-xs restricted-button flex align-center">
 					${frappe.utils.icon("restriction", "xs")}
 				</button>`
 			)
 				.click(() => this.show_restrictions(match_rules_list))
-				.appendTo(
-					frappe.is_mobile()
-						? this.page.page_form.find(".filter-section")
-						: this.page.page_form
-				);
+				.appendTo(this.page.page_form.find(".filter-section"));
 		}
 	}
 
@@ -291,8 +285,9 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 	set_primary_action() {
 		if (this.can_create && !frappe.boot.read_only) {
 			const doctype_name = __(frappe.router.doctype_layout) || __(this.doctype);
-			this.page.set_primary_action(
-				__("Add {0}", [doctype_name], "Primary action in list view"),
+			const add_button_label = __("Add {0}", [doctype_name], "Primary action in list view");
+			const create_button = this.page.set_primary_action(
+				add_button_label,
 				() => {
 					if (this.settings.primary_action) {
 						this.settings.primary_action();
@@ -302,8 +297,25 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 				},
 				"add"
 			);
+			if (frappe.is_mobile()) {
+				create_button.append(__("Add"));
+			} else {
+				this._trim_primary_action_if_overflow(create_button, add_button_label);
+			}
 		} else {
 			this.page.clear_primary_action();
+		}
+	}
+
+	_trim_primary_action_if_overflow(btn, add_button_label) {
+		const container = this.page.wrapper.find(".page-head-content")[0];
+		if (!container || !btn[0]) return;
+		const containerRect = container.getBoundingClientRect();
+		const btnRect = btn[0].getBoundingClientRect();
+		if (btnRect.right > containerRect.right) {
+			const short_label = __("Add");
+			btn.attr("title", add_button_label).tooltip();
+			btn.find("span").text(short_label);
 		}
 	}
 
@@ -819,9 +831,13 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 			let col = this.columns[i];
 
 			if (frappe.is_mobile() && col.type == "Field" && [3, 4].includes(i)) {
-				left_html += `<div class="mobile-layout ${
-					i == 3 ? "mobile-layout-seperator" : ""
-				}">${this.get_column_html(col, doc, true)}</div>`;
+				const no_seperator_class = !doc[col?.df?.fieldname] ? "no-seperator" : "";
+				left_html += `<div
+					class="mobile-layout ${no_seperator_class} ${i == 3 ? "mobile-layout-seperator" : ""}"
+					${no_seperator_class ? "style='padding-left: var(--margin-sm);'" : ""}
+					>
+					${this.get_column_html(col, doc, true)}
+				</div>`;
 			} else {
 				left_html += this.get_column_html(col, doc, false);
 			}
@@ -944,7 +960,7 @@ frappe.views.ListView = class ListView extends frappe.views.BaseList {
 
 			if (df.fieldtype === "Image") {
 				html = df.options
-					? `<img src="${doc[df.options]}"
+					? `<img src="${frappe.utils.escape_html(doc[df.options])}"
 					style="max-height: 30px; max-width: 100%;">`
 					: `<div class="missing-image small">
 						${frappe.utils.icon("restriction")}
