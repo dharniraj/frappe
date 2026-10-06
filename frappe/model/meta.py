@@ -17,7 +17,7 @@ Example:
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import click
 
@@ -259,6 +259,13 @@ class Meta(Document):
 
 		return "No Label"
 
+	def get_translated_label(self, fieldname):
+		"""Return the translated label of the given fieldname."""
+		if fieldname in DEFAULT_FIELD_LABELS:
+			return str(DEFAULT_FIELD_LABELS[fieldname])
+
+		return _(self.get_label(fieldname), context=self.name)
+
 	def get_options(self, fieldname):
 		return self.get_field(fieldname).options
 
@@ -450,8 +457,14 @@ class Meta(Document):
 			return
 
 		if frappe.db.estimate_count(self.name) > LARGE_TABLE_SIZE_THRESHOLD:
-			recent_change = frappe.db.get_value(self.name, {}, "modified", order_by="modified desc")
-			if get_datetime(recent_change) > add_to_date(None, days=-1 * LARGE_TABLE_RECENCY_THRESHOLD):
+			# Raw SQL to prevent querying meta when already in meta
+			recent_change = frappe.db.sql(
+				f"SELECT `creation` FROM `tab{self.name}` ORDER BY `creation` DESC LIMIT 1"
+			)  # nosemgrep
+			# NOTE: should not require use of zone -information, minimal comparison, to prevent querying meta when in meta.
+			if recent_change and get_datetime(recent_change[0][0]) > (
+				datetime.now() + timedelta(days=(-1 * LARGE_TABLE_RECENCY_THRESHOLD))
+			):
 				self.is_large_table = True
 
 	def init_field_caches(self):
