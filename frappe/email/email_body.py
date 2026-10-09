@@ -210,7 +210,18 @@ class EMail:
 
 		if has_inline_images:
 			# process inline images
-			message, _inline_images = replace_filename_with_cid(message)
+			provided_images = {}
+			if inline_images:
+				for img in inline_images:
+					if img.get("filename") and img.get("filecontent"):
+						# index by full path and basename for flexible matching
+						provided_images[img["filename"]] = img["filecontent"]
+						basename = img["filename"].rsplit("/", 1)[-1]
+						if basename not in provided_images:
+							provided_images[basename] = img["filecontent"]
+
+			# process inline images while preferring provided_images over disk reads
+			message, _inline_images = replace_filename_with_cid(message, provided_images)
 
 			# prepare parts
 			msg_related = MIMEMultipart("related", policy=policy.SMTP)
@@ -404,6 +415,7 @@ def get_formatted_html(
 	with_container=False,
 	raw_html=False,
 	add_css=True,
+	wrapper="templates/emails/standard.html",
 ):
 	email_account = email_account or EmailAccount.find_outgoing(match_by_email=sender)
 
@@ -420,13 +432,14 @@ def get_formatted_html(
 		params.update(
 			{
 				"brand_logo": get_brand_logo(email_account) if with_container or header else None,
+				"brand_name": get_brand_name() if with_container or header else None,
 				"with_container": with_container,
 				"header": get_header(header),
 				"content": message,
 				"footer": get_footer(email_account, footer),
 			}
 		)
-		rendered_email = frappe.get_template("templates/emails/standard.html").render(params)
+		rendered_email = frappe.get_template(wrapper).render(params)
 
 	html = scrub_urls(rendered_email)
 
@@ -437,7 +450,14 @@ def get_formatted_html(
 
 
 @frappe.whitelist()
-def get_email_html(template, args, subject, header=None, with_container=False):
+def get_email_html(
+	template: str,
+	args: str,
+	subject: str,
+	header: str | list | None = None,
+	with_container: str | int | bool = False,
+):
+	frappe.only_for("System Manager")
 	import json
 
 	with_container = cint(with_container)
@@ -565,11 +585,22 @@ def get_footer(email_account, footer=None):
 	return footer
 
 
-def replace_filename_with_cid(message):
+def replace_filename_with_cid(message, provided_images=None):
 	"""Replaces <img embed="assets/frappe/images/filename.jpg" ...> with
 	<img src="cid:content_id" ...> and return the modified message and
 	a list of inline_images with {filename, filecontent, content_id}
+
+	Args:
+		message: The HTML message to process
+		provided_images: A dictionary of images to use instead of reading from disk
+			Example:
+			{
+				"assets/frappe/images/filename.jpg": filecontent,
+				"filename.jpg": filecontent,
+			}
 	"""
+	if provided_images is None:
+		provided_images = {}
 
 	inline_images = []
 
@@ -584,7 +615,11 @@ def replace_filename_with_cid(message):
 		img_path_escaped = frappe.utils.html_utils.unescape_html(img_path)
 		filename = img_path_escaped.rsplit("/")[-1]
 
-		filecontent = get_filecontent_from_path(img_path_escaped)
+		# check if the image is provided in the provided_images(by checking full path and basename)
+		filecontent = provided_images.get(img_path_escaped) or provided_images.get(filename)
+		if not filecontent:
+			filecontent = get_filecontent_from_path(img_path_escaped)
+
 		if not filecontent:
 			message = re.sub(f"""embed=['"]{re.escape(img_path)}['"]""", "", message)
 			continue
@@ -607,15 +642,21 @@ def get_filecontent_from_path(path):
 
 	if path.startswith("assets/"):
 		# from public folder
+		base_path = os.path.abspath("assets")
 		full_path = os.path.abspath(path)
 	elif path.startswith("files/"):
 		# public file
-		full_path = frappe.get_site_path("public", path)
+		base_path = os.path.abspath(frappe.get_site_path("public", "files"))
+		full_path = os.path.abspath(frappe.get_site_path("public", path))
 	elif path.startswith("private/files/"):
 		# private file
-		full_path = frappe.get_site_path(path)
+		base_path = os.path.abspath(frappe.get_site_path("private", "files"))
+		full_path = os.path.abspath(frappe.get_site_path(path))
 	else:
-		full_path = path
+		return None
+
+	if os.path.commonpath((base_path, full_path)) != base_path:
+		return None
 
 	if os.path.exists(full_path):
 		with open(full_path, "rb") as f:
@@ -666,4 +707,8 @@ def sanitize_email_header(header: str):
 
 
 def get_brand_logo(email_account):
-	return email_account.get("brand_logo")
+	return (email_account and email_account.get("brand_logo")) or frappe.get_website_settings("app_logo")
+
+
+def get_brand_name():
+	return frappe.get_website_settings("app_name") or frappe.get_system_settings("app_name")

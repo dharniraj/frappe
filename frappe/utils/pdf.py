@@ -10,6 +10,8 @@ from urllib.parse import parse_qs, urlparse
 
 import cssutils
 import pdfkit
+import pdfkit.api
+from pdfkit.pdfkit import PDFKit as OriginalPDFKit
 
 pdfkit.source.unicode = str  # NOTE: upstream bug; PYTHONOPTIMIZE=1 optimized this away
 from bs4 import BeautifulSoup
@@ -32,6 +34,23 @@ PDF_CONTENT_ERRORS = [
 	"UnknownContentError",
 	"RemoteHostClosedError",
 ]
+
+
+class FrappePDFKit(OriginalPDFKit):
+	def _find_options_in_meta(self, content):
+		"""Override to disable meta tag parsing.
+
+		Returns an empty dict to prevent any wkhtmltopdf options from being
+		extracted from HTML meta tags. Only options passed explicitly to the
+		function should be used.
+		"""
+		return {}
+
+
+# Replace PDFKit in all relevant modules
+pdfkit.PDFKit = FrappePDFKit
+pdfkit.pdfkit.PDFKit = FrappePDFKit
+pdfkit.api.PDFKit = FrappePDFKit
 
 
 def pdf_header_html(soup, head, content, styles, html_id, css, path=None):
@@ -84,14 +103,19 @@ def pdf_footer_html(soup, head, content, styles, html_id, css, path=None):
 	)
 
 
-def get_pdf(html, options=None, output: PdfWriter | None = None):
+def get_pdf(html, options=None, output: PdfWriter | None = None, smart_shrinking: bool = False):
+	"""Render `html` to PDF.
+
+	:param smart_shrinking: scale content that is wider than the page down to fit it, instead of
+	        clipping the overflow.
+	"""
 	html = scrub_urls(html)
 	html, options = prepare_options(html, options)
 
 	options.update({"disable-javascript": "", "disable-local-file-access": ""})
 
 	filedata = ""
-	if Version(get_wkhtmltopdf_version()) > Version("0.12.3"):
+	if not smart_shrinking and Version(get_wkhtmltopdf_version()) > Version("0.12.3"):
 		options.update({"disable-smart-shrinking": ""})
 
 	try:
@@ -157,10 +181,14 @@ def get_chrome_pdf(print_format, html, options, output, pdf_generator=None):
 	# scrubbing url to expand url is not required as we have set url.
 	# also, planning to remove network requests anyway 🤞
 	generator = ChromePDFGenerator()
-	browser = Browser(generator, print_format, html, options)
-	transformer = PDFTransformer(browser)
-	# transforms and merges header, footer into body pdf and returns merged pdf
-	return transformer.transform_pdf(output=output)
+	browser = None
+	try:
+		browser = Browser(generator, print_format, html, options)
+		transformer = PDFTransformer(browser)
+		# transforms and merges header, footer into body pdf and returns merged pdf
+		return transformer.transform_pdf(output=output)
+	finally:
+		generator._close_browser()
 
 
 def get_file_data_from_writer(writer_obj):
@@ -210,6 +238,7 @@ def prepare_options(html, options):
 	)
 
 	if pdf_page_size == "Custom":
+		options.pop("page-size", None)
 		options["page-height"] = options.get("page-height") or frappe.db.get_single_value(
 			"Print Settings", "pdf_page_height"
 		)

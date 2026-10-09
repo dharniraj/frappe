@@ -127,6 +127,16 @@ export default class BulkOperations {
 						let task_id = response.message.task_id;
 						frappe.realtime.task_subscribe(task_id);
 						frappe.realtime.on(`task_complete:${task_id}`, (data) => {
+							frappe.realtime.task_unsubscribe(task_id);
+							frappe.realtime.off(`task_complete:${task_id}`);
+							if (data.error) {
+								frappe.msgprint({
+									title: __("Bulk PDF Export"),
+									message: data.error,
+									indicator: "red",
+								});
+								return;
+							}
 							frappe.msgprint({
 								title: __("Bulk PDF Export"),
 								message: __("Your PDF is ready for download"),
@@ -136,8 +146,6 @@ export default class BulkOperations {
 									args: data.file_url,
 								},
 							});
-							frappe.realtime.task_unsubscribe(task_id);
-							frappe.realtime.off(`task_complete:${task_id}`);
 						});
 					});
 			} else {
@@ -207,8 +215,20 @@ export default class BulkOperations {
 				},
 			})
 			.then((r) => {
+				// delete_items returns the undeleted names, or null when the job was enqueued.
+				// Only trust an explicit list — otherwise we would clear meta locals for
+				// documents that still exist (failed deletes) or were not deleted yet (async).
 				let failed = r.message;
-				if (!failed) failed = [];
+				if (!Array.isArray(failed)) {
+					if (done) done();
+					return;
+				}
+
+				for (const name of docnames) {
+					if (!failed.includes(name)) {
+						frappe.model.delete_from_locals(this.doctype, name);
+					}
+				}
 
 				if (failed.length && !r._server_messages) {
 					frappe.throw(
@@ -308,21 +328,28 @@ export default class BulkOperations {
 	}
 
 	edit(docnames, field_mappings, done) {
-		let field_options = Object.keys(field_mappings).sort(function (a, b) {
-			return __(cstr(field_mappings[a].label)).localeCompare(
-				cstr(__(field_mappings[b].label))
+		const field_options = Object.keys(field_mappings).sort(function (a, b) {
+			return field_mappings[a].translated_label.localeCompare(
+				field_mappings[b].translated_label
 			);
 		});
+		const field_autocomplete_options = field_options.map((key) => ({
+			label: field_mappings[key].translated_label,
+			value: key,
+		}));
 		const status_regex = /status/i;
 
-		const default_field = field_options.find((value) => status_regex.test(value));
+		const default_field =
+			field_options.find((value) => status_regex.test(value)) ||
+			field_options.find((value) => field_mappings[value]?.fieldtype === "Select");
 
 		const dialog = new frappe.ui.Dialog({
 			title: __("Bulk Edit"),
 			fields: [
 				{
-					fieldtype: "Select",
-					options: field_options,
+					fieldtype: "Autocomplete",
+					options: field_autocomplete_options,
+					max_items: Infinity,
 					default: default_field,
 					label: __("Field"),
 					fieldname: "field",
@@ -420,6 +447,8 @@ export default class BulkOperations {
 		}
 
 		function show_help_text() {
+			if (dialog.get_primary_btn().is(":focus, :active")) return;
+
 			let value = dialog.get_value("value");
 			if (value == null || value === "") {
 				dialog.set_df_property(
@@ -478,7 +507,9 @@ export default class BulkOperations {
 		frappe.require("data_import_tools.bundle.js", () => {
 			const data_exporter = new frappe.data_import.DataExporter(
 				doctype,
-				"Insert New Records"
+				"Insert New Records",
+				"CSV",
+				true
 			);
 			data_exporter.dialog.set_value("export_records", "by_filter");
 			data_exporter.filter_group.add_filters_to_filter_group([

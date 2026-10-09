@@ -513,9 +513,17 @@ class BaseDocument:
 		d = _dict()
 		field_values = self.__dict__
 		field_map = self.meta._fields
+		masked_fieldnames = self.flags.get("masked_fieldnames")
 
 		for fieldname in self.meta.get_valid_fields():
 			value = field_values.get(fieldname)
+
+			# Masked fields hold the XXXXXXXX placeholder; pass it through untouched so it is not
+			# cast back to 0 for numeric fieldtypes. Only truthy values get masked, so falsy ones
+			# fall through to the normal null-aware path.
+			if value and fieldname in (masked_fieldnames or ()):
+				d[fieldname] = value
+				continue
 
 			# if no need for sanitization and value is None, continue
 			if not sanitize and value is None:
@@ -551,6 +559,9 @@ class BaseDocument:
 
 				elif fieldtype in float_like_fields and not isinstance(value, float):
 					value = flt(value)
+
+				elif fieldtype == "Read Only" and not isinstance(value, str):
+					value = cstr(value)
 
 				elif (fieldtype in datetime_fields and value == "") or (
 					getattr(df, "unique", False) and cstr(value).strip() == ""
@@ -618,7 +629,7 @@ class BaseDocument:
 		return valid_columns_cache[self.doctype]
 
 	def is_new(self) -> bool:
-		return self.get("__islocal")
+		return bool(self.get("__islocal"))
 
 	@property
 	def docstatus(self) -> DocStatus:
@@ -1238,8 +1249,11 @@ class BaseDocument:
 		autoname = self.meta.autoname or ""
 		_empty, _field_specifier, fieldname = autoname.partition("field:")
 
-		if fieldname and self.name and self.name != self.get(fieldname):
-			self.set(fieldname, self.name)
+		if fieldname and self.name:
+			df = self.meta.get_field(fieldname)
+			name = self.cast(self.name, df) if df else self.name
+			if name != self.get(fieldname):
+				self.set(fieldname, name)
 
 	def throw_length_exceeded_error(self, df, max_length, value):
 		# check if parentfield exists (only applicable for child table doctype)
@@ -1323,7 +1337,7 @@ class BaseDocument:
 			if df and (
 				df.get("ignore_xss_filter")
 				or (df.get("fieldtype") in ("Data", "Small Text", "Text") and df.get("options") == "Email")
-				or df.get("fieldtype") in ("Attach", "Attach Image", "Barcode", "Code")
+				or df.get("fieldtype") in ("Attach", "Attach Image", "Barcode", "Code", "JSON")
 				# cancelled and submit but not update after submit should be ignored
 				or self.docstatus.is_cancelled()
 				or (self.docstatus.is_submitted() and not df.get("allow_on_submit"))
@@ -1573,7 +1587,9 @@ def _filter(data, filters, limit=None):
 	return out
 
 
-CACHED_PROPERTIES = (prop for prop, value in vars(BaseDocument).items() if isinstance(value, cached_property))
+CACHED_PROPERTIES = tuple(
+	prop for prop, value in vars(BaseDocument).items() if isinstance(value, cached_property)
+)
 
 UNPICKLABLE_KEYS = frozenset(
 	(
@@ -1588,6 +1604,7 @@ RESERVED_KEYWORDS = frozenset(
 		"flags",
 		"_parent_doc",
 		"_doc_before_save",
+		"_action",
 		"dont_update_if_missing",
 		*CACHED_PROPERTIES,
 	)

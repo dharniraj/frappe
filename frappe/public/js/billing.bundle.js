@@ -1,12 +1,12 @@
 let frappeCloudBaseEndpoint = "https://frappecloud.com";
-let isFCUser = false;
+let isFCUser = true;
 
 $(document).ready(function () {
 	const site_info = frappe.boot.site_info;
 	if (site_info) {
 		const trial_end_date = new Date(site_info.trial_end_date);
 		frappeCloudBaseEndpoint = site_info.base_url;
-		isFCUser = site_info.is_fc_user;
+		// isFCUser = site_info.is_fc_user;
 
 		const today = new Date();
 		const diffTime = trial_end_date - today;
@@ -14,8 +14,10 @@ $(document).ready(function () {
 		const trial_end_string =
 			trial_end_days > 1 ? `${trial_end_days} days` : `${trial_end_days} day`;
 
+		// the card template renders the message as-is, so the link can sit inside the sentence
+		const partners_link = `<a class="frappe-card-link" href="${getFrappePartnersUrl()}" target="_blank" rel="noopener noreferrer">partners</a>`;
 		const banner_message = isFCUser
-			? "Please upgrade for uninterrupted services"
+			? `Please upgrade for uninterrupted services. Take help from our ${partners_link} to get started.`
 			: "Please contact your system administrator to upgrade your plan.";
 		let card_args = {
 			title: `Your trial ends in ${trial_end_string}`,
@@ -24,6 +26,7 @@ $(document).ready(function () {
 			close_button: true,
 			popper: true,
 			primary_button_alignment: "right",
+			primary_action_in_header: true,
 			dismiss_key: `${frappe.boot.site_info.name}_trial_card_time`,
 			dismiss_it_for: "day",
 		};
@@ -33,7 +36,8 @@ $(document).ready(function () {
 			!frappe.is_mobile() &&
 			frappe.user.has_role("System Manager");
 		if (visiblity_condition && isFCUser) {
-			if (site_info.trial_end_date && trial_end_date > new Date()) {
+			let chat_bubble_visiblity = false;
+			if (chat_bubble_visiblity && site_info.trial_end_date && trial_end_date > new Date()) {
 				addChatBubble();
 				toggleChatBubble(true);
 			}
@@ -43,9 +47,9 @@ $(document).ready(function () {
 				primary_action_label: "Upgrade",
 				primary_action_suffix_icon: "square-arrow-out-up-right",
 				styles: {
-					"sidebar-card-button-bg-color": "var(--surface-gray-2)",
-					"sidebar-card-button-color": "var(--ink-gray-7)",
-					"sidebar-card-button-outline": "var(--ink-gray-7)",
+					"frappe-card-button-bg-color": "var(--surface-gray-2)",
+					"frappe-card-button-color": "var(--ink-gray-7)",
+					"frappe-card-button-outline": "var(--ink-gray-7)",
 				},
 				primary_action: () => {
 					openFrappeCloudDashboard();
@@ -56,7 +60,7 @@ $(document).ready(function () {
 			if (visiblity_condition) {
 				if (site_info.trial_end_date && trial_end_date > new Date()) {
 					card_args.parent = $(".icons-container").first();
-					let banner_card = new frappe.ui.SidebarCard(card_args);
+					let banner_card = new frappe.ui.Card(card_args);
 				}
 				addManageBillingDropdown(data.desktop);
 
@@ -89,6 +93,15 @@ function openFrappeCloudDashboard() {
 		`${frappeCloudBaseEndpoint}/dashboard/sites/${frappe.boot.site_info.name}`,
 		"_blank"
 	);
+}
+
+function getFrappePartnersUrl() {
+	// the partner list filters on country names from the Country doctype,
+	// which is what System Settings stores as the system default
+	const country = frappe.boot.sysdefaults?.country;
+	return country
+		? `https://frappe.io/partners/list?country=${encodeURIComponent(country)}`
+		: "https://frappe.io/partners/regions";
 }
 
 function addChatBubble() {

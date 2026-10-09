@@ -1,4 +1,4 @@
-import Awesomplete from "awesomplete";
+import Awesomplete from "../../ui/awesomplete";
 
 frappe.ui.form.ControlAutocomplete = class ControlAutoComplete extends frappe.ui.form.ControlData {
 	static trigger_change_on_input_event = false;
@@ -40,7 +40,7 @@ frappe.ui.form.ControlAutocomplete = class ControlAutoComplete extends frappe.ui
 	get_awesomplete_settings() {
 		var me = this;
 		return {
-			tabSelect: true,
+			tabSelect: false,
 			minChars: 0,
 			maxItems: this.df.max_items || 99,
 			autoFirst: true,
